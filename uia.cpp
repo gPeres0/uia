@@ -1,7 +1,17 @@
 /**
  * UNIVERSIDADE ESTADUAL DE LONDRINA
- * Trabalho Final de Computação Gráfica
- * RUN: g++ uia.cpp -o uia -lGL -lGLU -lglut -lSDL2 -lSDL2_mixer && ./uia
+ * Trabalho Final: Gato Dançante - FINAL EXPLOSIVO
+ * * * RECURSOS NECESSÁRIOS (pasta sounds/):
+ * - u.mp3, ii.mp3, a.mp3
+ * - uiia.mp3 (Combo)
+ * - fase2.mp3 (Musica Fase 2 e Eterno)
+ * - explosao.wav [NOVO] (Efeito sonoro curto)
+ * * * COMANDOS:
+ * - 'u'+'i'+'a': Inicia Combo.
+ * - Segurar 10s: Ativa MODO ETERNO.
+ * - Aguardar 36s no Modo Eterno: EXPLOSÃO.
+ * - 'r': Reiniciar aplicação.
+ * * * RUN: g++ uia.cpp -o uia -lGL -lGLU -lglut -lSDL2 -lSDL2_mixer && ./uia
  */
 
 #include <GL/glut.h>
@@ -9,6 +19,9 @@
 #include <stdio.h>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_mixer.h>
+
+int windowW = 800;
+int windowH = 600;
 
 // Rotação atual do gato
 GLfloat anguloGato = 45.0f;
@@ -19,11 +32,14 @@ bool tecla_u = false;
 bool tecla_i = false;
 bool tecla_a = false;
 
-// Variáveis de Tempo e Estados Especiais [NOVO]
+// Variáveis de tempo e Estados especiais
 Uint32 tempoInicioCombo = 0;    // Armazena o momento exato (ms) que o combo começou
 bool fase2 = false;             // Ativa após 10s
 bool modoEterno = false;        // Ativa após 10s
 float velocidadeGiro = 15.0f;   // Velocidade de giro base
+bool explodido = false;         // Indica se o gato morreu
+bool somExplosaoTocado = false;
+float fatorExplosao = 0.0f;     // Controla a distância das partes na explosão
 
 // Variáveis de levitação
 float anguloLevitacao = 0.0f; // O "relógio" da onda senoidal
@@ -48,6 +64,7 @@ Mix_Music* som_i = NULL;
 Mix_Music* som_a = NULL;
 Mix_Music* som_uiia = NULL;
 Mix_Music* som_fase2 = NULL;
+Mix_Music* som_explosao = NULL;
 
 // Enum para rastrear qual som está tocando
 enum EstadoSom { PARADO, TOCANDO_U, TOCANDO_I, TOCANDO_A, TOCANDO_UIIA, TOCANDO_FASE2 };
@@ -65,6 +82,7 @@ void initAudio() {
     som_a = Mix_LoadMUS("sounds/a.mp3");
     som_uiia = Mix_LoadMUS("sounds/uiia.mp3");
     som_fase2 = Mix_LoadMUS("sounds/fase2.mp3");
+    som_explosao = Mix_LoadMUS("sounds/explosao.mp3");
 }
 
 // Limpeza de recursos de áudio
@@ -74,13 +92,47 @@ void cleanup() {
     if (som_a) Mix_FreeMusic(som_a);
     if (som_uiia) Mix_FreeMusic(som_uiia);
     if (som_fase2) Mix_FreeMusic(som_fase2);
+    if (som_explosao) Mix_FreeMusic(som_explosao);
     Mix_CloseAudio();
     SDL_Quit();
     printf("Recursos de audio liberados.\n");
 }
 
+// Função para reiniciar o programa
+void resetarPrograma() {
+    anguloGato = 45.0f;
+    animando = false;
+    indiceCor = 0;
+    
+    tempoInicioCombo = 0;
+    fase2 = false;
+    modoEterno = false;
+    explodido = false;
+    somExplosaoTocado = false;
+    
+    velocidadeGiro = 15.0f;
+    anguloLevitacao = 0.0f;
+    alturaLevitacao = 0.0f;
+    fatorExplosao = 0.0f;
+    
+    estadoAtual = PARADO;
+    Mix_HaltMusic();
+    Mix_HaltChannel(-1); // Para todos os efeitos sonoros
+    
+    // Reseta iluminação
+    for (int i = 0; i < 3; i++) {
+        glLightfv(GL_LIGHT0 + i, GL_DIFFUSE, luzAmbiente);
+        glLightfv(GL_LIGHT0 + i, GL_SPECULAR, luzAmbiente);
+    }
+    
+    glutPostRedisplay();
+    printf("Programa Reiniciado.\n");
+}
+
 // Função de gerenciamento responsivo de áudio
 void gerenciarAudio() {
+    if (explodido) return;
+
     // Se o MODO ETERNO estiver ligado, toca Fase 2 para sempre
     if (modoEterno) {
         if (estadoAtual != TOCANDO_FASE2) {
@@ -154,48 +206,102 @@ void configurarLuzes() {
 }
 
 void atualizarCorLuzes() {
-    const GLfloat* corAtual;
-    if (animando) {
-        corAtual = arcoIris[indiceCor];
-    } else {
-        corAtual = luzAmbiente;
+    // Se explodiu, luzes ficam vermelhas piscando rápido ou escuras
+    if (explodido) {
+        // Efeito estroboscópico de erro
+        GLfloat corErro[] = {1.0f, 0.0f, 0.0f, 1.0f};
+        if (indiceCor % 2 == 0) corErro[0] = 0.0f; // Pisca
+        for (int i = 0; i < 3; i++) {
+            glLightfv(GL_LIGHT0 + i, GL_DIFFUSE, corErro);
+            glLightfv(GL_LIGHT0 + i, GL_SPECULAR, corErro);
+        }
+        return;
     }
+
+    const GLfloat* corAtual = animando ? arcoIris[indiceCor] : luzAmbiente;
     for (int i = 0; i < 3; i++) {
         glLightfv(GL_LIGHT0 + i, GL_DIFFUSE, corAtual);
         glLightfv(GL_LIGHT0 + i, GL_SPECULAR, corAtual);
     }
 }
 
+void desenharTextoCentro(const char* texto) {
+    // Desabilita luzes e profundidade para o texto ficar branco e por cima de tudo
+    glDisable(GL_LIGHTING);
+    glDisable(GL_DEPTH_TEST);
+
+    // Muda para projeção ortogonal (2D)
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    gluOrtho2D(0, windowW, 0, windowH);
+
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+
+    // Cor Branca
+    glColor3f(1.0f, 1.0f, 1.0f);
+
+    // Calcula a largura do texto em pixels para centralizar
+    int larguraTexto = 0;
+    for (const char* c = texto; *c != '\0'; c++) {
+        larguraTexto += glutBitmapWidth(GLUT_BITMAP_HELVETICA_18, *c);
+    }
+
+    // Posiciona no centro da tela
+    int x = (windowW - larguraTexto) / 2;
+    int y = windowH / 2;
+    glRasterPos2i(x, y);
+
+    // Desenha caractere por caractere
+    for (const char* c = texto; *c != '\0'; c++) {
+        glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, *c);
+    }
+
+    // Restaura as matrizes anteriores (Volta para 3D)
+    glPopMatrix();
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+
+    // Reabilita o que foi desligado
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_LIGHTING);
+}
+
 // Modelagem hierárquica do gato
 void desenharGato() {
     glPushMatrix();
         glTranslatef(0.0f, alturaLevitacao, 0.0f);
-        glRotatef(anguloGato, 0.0f, 1.0f, 0.0f);
-        // Corpo
-        glPushMatrix();
+        if (explodido) {
+            glRotatef(anguloGato, 1.0f, 1.0f, 1.0f);
+        } else {
+            glRotatef(anguloGato, 0.0f, 1.0f, 0.0f);
+        }
+        glPushMatrix(); // Corpo
             glScalef(0.8f, 0.8f, 1.0f);
             glutSolidSphere(1.0, 40, 40);
         glPopMatrix();
-        // Cabeça
-        glPushMatrix();
-            glTranslatef(0.0f, 0.8f, 0.8f);
+        glPushMatrix(); // Cabeça
+            // Adiciona o fatorExplosao aos vetores de translação
+            glTranslatef(0.0f, 0.8f + fatorExplosao, 0.8f + fatorExplosao);
+            // Gira a cabeça aleatoriamente se explodindo
+            if(explodido) glRotatef(anguloGato * 2, 1, 0, 0);
             glutSolidSphere(0.6, 40, 40);
-            // Orelha Esquerda
-            glPushMatrix();
+            glPushMatrix(); // Orelha esq
                 glTranslatef(-0.3f, 0.5f, 0.0f);
                 glRotatef(30, 0.0f, 0.0f, 1.0f);
                 glRotatef(-90, 1.0f, 0.0f, 0.0f);
                 glutSolidCone(0.2, 0.2, 20, 20);
             glPopMatrix();
-            // Orelha Direita
-            glPushMatrix();
+            glPushMatrix(); // Orelha dir
                 glTranslatef(0.3f, 0.5f, 0.0f);
                 glRotatef(-30, 0.0f, 0.0f, 1.0f);
                 glRotatef(-90, 1.0f, 0.0f, 0.0f);
                 glutSolidCone(0.2, 0.2, 20, 20);
             glPopMatrix();
-            // Olhos
-            glPushMatrix();
+            glPushMatrix(); // Olhos
                 glTranslatef(-0.2f, 0.1f, 0.5f);
                 glutSolidSphere(0.1, 10, 10);
             glPopMatrix();
@@ -205,29 +311,34 @@ void desenharGato() {
             glPopMatrix();
         glPopMatrix();
         // Pernas
-        glPushMatrix(); // Frontal Esq
-            glTranslatef(-0.4f, -0.1f, 0.5f);
+        glPushMatrix(); // Frontal esq
+            glTranslatef(-0.4f - fatorExplosao, -0.1f - fatorExplosao, 0.5f + fatorExplosao); 
+            if(explodido) glRotatef(anguloGato * 3, 0, 1, 0);
             glRotatef(90, 1.0f, 0.0f, 0.0f);
             glutSolidCone(0.25, 1.0, 20, 20);
         glPopMatrix();
-        glPushMatrix(); // Frontal Dir
-            glTranslatef(0.4f, -0.1f, 0.5f);
+        glPushMatrix(); // Frontal dir
+            glTranslatef(0.4f + fatorExplosao, -0.1f - fatorExplosao, 0.5f + fatorExplosao);
+            if(explodido) glRotatef(anguloGato * 3, 0, 1, 0);
             glRotatef(90, 1.0f, 0.0f, 0.0f);
             glutSolidCone(0.25, 1.0, 20, 20);
         glPopMatrix();
-        glPushMatrix(); // Traseira Esq
-            glTranslatef(-0.4f, -0.1f, -0.5f);
+        glPushMatrix(); // Traseira esq
+            glTranslatef(-0.4f - fatorExplosao, -0.1f - fatorExplosao, -0.5f - fatorExplosao);
+            if(explodido) glRotatef(anguloGato * 3, 0, 1, 0);
             glRotatef(90, 1.0f, 0.0f, 0.0f);
             glutSolidCone(0.25, 1.0, 20, 20);
         glPopMatrix();
-        glPushMatrix(); // Traseira Dir
-            glTranslatef(0.4f, -0.1f, -0.5f);
+        glPushMatrix(); // Traseira dir
+            glTranslatef(0.4f + fatorExplosao, -0.1f - fatorExplosao, -0.5f - fatorExplosao);
+            if(explodido) glRotatef(anguloGato * 3, 0, 1, 0);
             glRotatef(90, 1.0f, 0.0f, 0.0f);
             glutSolidCone(0.25, 1.0, 20, 20);
         glPopMatrix();
         // Rabo
         glPushMatrix();
-            glTranslatef(0.0f, 0.3f, -0.8f);
+            glTranslatef(0.0f, 0.3f + fatorExplosao, -0.8f - (fatorExplosao*1.5)); 
+            if(explodido) glRotatef(anguloGato * 5, 0, 0, 1);
             glRotatef(250, 1.0f, 0.0f, 0.0f);
             glutSolidCone(0.1, 0.8, 10, 10);
         glPopMatrix();
@@ -236,7 +347,10 @@ void desenharGato() {
 
 void display() {
     // Fundo da tela
-    if (fase2 || modoEterno) {
+    if (explodido) {
+        // Fundo vermelho escuro dramático
+        glClearColor(0.2f, 0.0f, 0.0f, 1.0f);
+    } else if (fase2 || modoEterno) {
         const GLfloat* corFundo = arcoIris[(indiceCor + 3) % 6];
         glClearColor(corFundo[0]*0.7, corFundo[1]*0.7, corFundo[2]*0.7, 1.0f);
     } else {
@@ -247,16 +361,35 @@ void display() {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glLoadIdentity();
 
+    float distCamera = explodido ? 8.0f : 5.0f;
     gluLookAt(0.0, 2.0, 5.0,  
               0.0, 0.0, 0.0,  
               0.0, 1.0, 0.0);
 
     atualizarCorLuzes();
     desenharGato();
+
+    if (explodido) desenharTextoCentro("PRESSIONE R PARA REINICIAR");     
+
     glutSwapBuffers();
 }
 
 void timer(int value) {
+    // Lógica de explosão
+    if (explodido) {
+        // Se já explodiu, aumenta a distância dos pedaços infinitamente
+        fatorExplosao += 0.2f; 
+        anguloGato += 10.0f; // Gira a cena da explosão
+        
+        // Pisca luzes
+        indiceCor++;
+        if (indiceCor >= 6) indiceCor = 0;
+        
+        glutPostRedisplay();
+        glutTimerFunc(1000/60, timer, 0);
+        return; // Retorn para não processar o resto da lógica normal
+    }
+
     bool comboAtivo = (tecla_u && tecla_i && tecla_a);
     // Lógica de contagem de tempo
     if (comboAtivo && !modoEterno) {
@@ -267,12 +400,10 @@ void timer(int value) {
         Uint32 tempoDecorrido = SDL_GetTicks() - tempoInicioCombo;
         
         // 5 Segundos -> FASE 2
-        if (tempoDecorrido > 5000) {
-            velocidadeGiro = 35.0f;
-        }
+        if (tempoDecorrido > 4000) velocidadeGiro = 35.0f;
 
         // 10 Segundos -> MODO ETERNO
-        if (tempoDecorrido > 10000) {
+        if (tempoDecorrido > 8000) {
             fase2 = true;
             modoEterno = true;
             velocidadeGiro = 55.0f;
@@ -287,7 +418,21 @@ void timer(int value) {
         }
     }
 
-    if (modoEterno) animando = true;
+    if (modoEterno) {
+        animando = true;
+
+        Uint32 tempoTotal = SDL_GetTicks() - tempoInicioCombo;
+        // 8000ms (ativar eterno) + 25000ms (musica) = 33000ms
+        if (tempoTotal > 33000) {
+            explodido = true;
+            Mix_HaltMusic(); // Para a música
+            if (!somExplosaoTocado) {
+                Mix_PlayMusic(som_explosao, 0);
+                somExplosaoTocado = true;
+                printf("KABOOM! Pressione 'r' para reiniciar.\n");
+            }
+        }
+    }
 
     // A levitação só acontece se for Combo, Fase 2 ou Modo Eterno
     if (comboAtivo || modoEterno) {
@@ -323,7 +468,7 @@ void timer(int value) {
 
         if (anguloGato >= 365.0f) {
             anguloGato = 45.0f;
-            if (!(tecla_u && tecla_i && tecla_a && modoEterno)) {
+            if (!comboAtivo && !modoEterno) {
                 animando = false;
                 atualizarCorLuzes(); 
             }
@@ -337,7 +482,10 @@ void timer(int value) {
 // Controles de teclado
 void keyboard(unsigned char key, int x, int y) {
     if (key >= 'A' && key <= 'Z') key += 32;
-
+    
+    if (key == 'r') { resetarPrograma(); return; }
+    if (explodido) { if (key == 27) exit(0); return; }
+    
     if (key == 'u') tecla_u = true;
     if (key == 'i') tecla_i = true;
     if (key == 'a') tecla_a = true;
@@ -362,6 +510,8 @@ void keyboardUp(unsigned char key, int x, int y) {
 
 void reshape(int w, int h) {
     if (h == 0) h = 1;
+    windowW = w;
+    windowH = h;
     glViewport(0, 0, w, h);
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
@@ -377,7 +527,7 @@ int main(int argc, char** argv) {
     initAudio();
 
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
-    glutInitWindowSize(800, 600);
+    glutInitWindowSize(windowW, windowH);
     glutCreateWindow("UIIA");
 
     configurarLuzes();
