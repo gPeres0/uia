@@ -7,27 +7,19 @@
 #include <GL/glut.h>
 #include <math.h>
 #include <stdio.h>
-
-// [NOVO] Bibliotecas SDL para áudio
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_mixer.h>
 
-// --- Variáveis Globais de Controle ---
-GLfloat anguloGato = 45.0f;       // Rotação atual do gato
-bool animando = false;           // Estado da animação
-int  indiceCor = 0;              // Índice para cores do arco-íris
-
-// Estados das teclas (para detectar combos)
+// Rotação atual do gato
+GLfloat anguloGato = 45.0f;
+// Estado da animação
+bool animando = false;
+// Estados das teclas
 bool tecla_u = false;
 bool tecla_i = false;
 bool tecla_a = false;
 
-// [NOVO] Ponteiros para os sons
-Mix_Chunk* som_u = NULL;
-Mix_Chunk* som_i = NULL;
-Mix_Chunk* som_a = NULL;
-
-// Cores do Arco-íris (RGB) para as luzes
+// Cores das luzes
 const GLfloat arcoIris[6][4] = {
     {1.0f, 0.0f, 0.0f, 1.0f}, // Vermelho
     {1.0f, 0.5f, 0.0f, 1.0f}, // Laranja
@@ -36,41 +28,80 @@ const GLfloat arcoIris[6][4] = {
     {0.0f, 0.0f, 1.0f, 1.0f}, // Azul
     {0.5f, 0.0f, 1.0f, 1.0f}  // Roxo
 };
+int  indiceCor = 0;
 const GLfloat luzAmbiente[] = {0.6f, 0.6f, 0.6f, 1.0f};
 
-// [NOVO] Inicialização do SDL Audio
+// Ponteiros para os sons
+Mix_Music* som_u = NULL;
+Mix_Music* som_i = NULL;
+Mix_Music* som_a = NULL;
+Mix_Music* som_uiia = NULL;
+
+// Enum para rastrear qual som está tocando
+enum EstadoSom { PARADO, TOCANDO_U, TOCANDO_I, TOCANDO_A, TOCANDO_UIIA };
+EstadoSom estadoAtual = PARADO;
+
+
+// Inicialização do SDL Audio
 void initAudio() {
-    if (SDL_Init(SDL_INIT_AUDIO) < 0) {
-        printf("Erro ao inicializar SDL: %s\n", SDL_GetError());
-        exit(1);
-    }
-    // Inicializa Mixer: Frequência 44100Hz, Formato padrão, 2 canais (stereo), chunksize 2048
-    if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) < 0) {
-        printf("Erro ao inicializar SDL_mixer: %s\n", Mix_GetError());
-        exit(1);
-    }
+    if (SDL_Init(SDL_INIT_AUDIO) < 0) exit(1);
+    if (Mix_Init(MIX_INIT_MP3) == 0) printf("Erro Mix_Init: %s\n", Mix_GetError());
+    if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) < 0) exit(1);
 
-    // Carrega os arquivos WAV
-    som_u = Mix_LoadWAV("u.wav");
-    som_i = Mix_LoadWAV("i.wav");
-    som_a = Mix_LoadWAV("a.wav");
-
-    if (!som_u || !som_i || !som_a) {
-        printf("Aviso: Um ou mais arquivos de som (u.wav, i.wav, a.wav) nao foram encontrados!\n");
-    }
+    som_u = Mix_LoadMUS("sounds/u.mp3");
+    som_i = Mix_LoadMUS("sounds/ii.mp3");
+    som_a = Mix_LoadMUS("sounds/a.mp3");
+    som_uiia = Mix_LoadMUS("sounds/uiia.mp3");
 }
 
-// [NOVO] Limpeza de recursos ao sair
+// Limpeza de recursos de áudio
 void cleanup() {
-    if (som_u) Mix_FreeChunk(som_u);
-    if (som_i) Mix_FreeChunk(som_i);
-    if (som_a) Mix_FreeChunk(som_a);
+    if (som_u) Mix_FreeMusic(som_u);
+    if (som_i) Mix_FreeMusic(som_i);
+    if (som_a) Mix_FreeMusic(som_a);
+    if (som_a) Mix_FreeMusic(som_uiia);
     Mix_CloseAudio();
     SDL_Quit();
     printf("Recursos de audio liberados.\n");
 }
 
-// --- Configuração de Iluminação ---
+// Função de gerenciamento responsivo de áudio
+void gerenciarAudio() {
+    // Maior prioridade (U + I + A)
+    if (tecla_u && tecla_i && tecla_a) {
+        // Só toca se já não estiver tocando
+        if (estadoAtual != TOCANDO_UIIA) {
+            Mix_PlayMusic(som_uiia, -1); // -1 = Loop Infinito
+            estadoAtual = TOCANDO_UIIA;
+        }
+    }
+    // Prioridades arbitrárias
+    else if (tecla_u) {
+        if (estadoAtual != TOCANDO_U) {
+            Mix_PlayMusic(som_u, 0);
+            estadoAtual = TOCANDO_U;
+        }
+    } else if (tecla_i) {
+        if (estadoAtual != TOCANDO_I) {
+            Mix_PlayMusic(som_i, 0);
+            estadoAtual = TOCANDO_I;
+        }
+    } else if (tecla_a) {
+        if (estadoAtual != TOCANDO_A) {
+            Mix_PlayMusic(som_a, 0);
+            estadoAtual = TOCANDO_A;
+        }
+    }
+    // Nenhuma tecla relevante pressionada
+    else {
+        if (estadoAtual != PARADO) {
+            if (estadoAtual == TOCANDO_UIIA) Mix_HaltMusic();
+            estadoAtual = PARADO;
+        }
+    }
+}
+
+// Configurações de iluminação
 void configurarLuzes() {
     glEnable(GL_LIGHTING);
     glEnable(GL_DEPTH_TEST);
@@ -112,39 +143,34 @@ void atualizarCorLuzes() {
     }
 }
 
-// --- Modelagem Hierárquica do Gato ---
+// Modelagem hierárquica do gato
 void desenharGato() {
     glPushMatrix();
         glRotatef(anguloGato, 0.0f, 1.0f, 0.0f);
-
-        // 1. Corpo
+        // Corpo
         glPushMatrix();
             glScalef(0.8f, 0.8f, 1.0f);
             glutSolidSphere(1.0, 40, 40);
         glPopMatrix();
-    
-        // 2. Cabeça
+        // Cabeça
         glPushMatrix();
             glTranslatef(0.0f, 0.8f, 0.8f);
             glutSolidSphere(0.6, 40, 40);
-
-            // 2.1 Orelha Esquerda
+            // Orelha Esquerda
             glPushMatrix();
                 glTranslatef(-0.3f, 0.5f, 0.0f);
                 glRotatef(30, 0.0f, 0.0f, 1.0f);
                 glRotatef(-90, 1.0f, 0.0f, 0.0f);
                 glutSolidCone(0.2, 0.2, 20, 20);
             glPopMatrix();
-
-            // 2.2 Orelha Direita
+            // Orelha Direita
             glPushMatrix();
                 glTranslatef(0.3f, 0.5f, 0.0f);
                 glRotatef(-30, 0.0f, 0.0f, 1.0f);
                 glRotatef(-90, 1.0f, 0.0f, 0.0f);
                 glutSolidCone(0.2, 0.2, 20, 20);
             glPopMatrix();
-            
-            // 2.3 Olhos
+            // Olhos
             glPushMatrix();
                 glTranslatef(-0.2f, 0.1f, 0.5f);
                 glutSolidSphere(0.1, 10, 10);
@@ -154,39 +180,33 @@ void desenharGato() {
                 glutSolidSphere(0.1, 10, 10);
             glPopMatrix();
         glPopMatrix();
-
-        // 3. Pernas
+        // Pernas
         glPushMatrix(); // Frontal Esq
             glTranslatef(-0.4f, -0.1f, 0.5f);
             glRotatef(90, 1.0f, 0.0f, 0.0f);
             glutSolidCone(0.25, 1.0, 20, 20);
         glPopMatrix();
-
         glPushMatrix(); // Frontal Dir
             glTranslatef(0.4f, -0.1f, 0.5f);
             glRotatef(90, 1.0f, 0.0f, 0.0f);
             glutSolidCone(0.25, 1.0, 20, 20);
         glPopMatrix();
-        
         glPushMatrix(); // Traseira Esq
             glTranslatef(-0.4f, -0.1f, -0.5f);
             glRotatef(90, 1.0f, 0.0f, 0.0f);
             glutSolidCone(0.25, 1.0, 20, 20);
         glPopMatrix();
-
         glPushMatrix(); // Traseira Dir
             glTranslatef(0.4f, -0.1f, -0.5f);
             glRotatef(90, 1.0f, 0.0f, 0.0f);
             glutSolidCone(0.25, 1.0, 20, 20);
         glPopMatrix();
-        
-        // 4. Cauda
+        // Rabo
         glPushMatrix();
             glTranslatef(0.0f, 0.3f, -0.8f);
             glRotatef(250, 1.0f, 0.0f, 0.0f);
             glutSolidCone(0.1, 0.8, 10, 10);
         glPopMatrix();
-
     glPopMatrix();
 }
 
@@ -205,6 +225,8 @@ void display() {
 }
 
 void timer(int value) {
+    gerenciarAudio();
+
     if (animando) {
         anguloGato += 15.0f; 
         indiceCor++;
@@ -222,32 +244,23 @@ void timer(int value) {
     glutTimerFunc(1000/60, timer, 0);
 }
 
-// --- Controle de Teclado ---
+// Controles de teclado
 void keyboard(unsigned char key, int x, int y) {
     if (key >= 'A' && key <= 'Z') key += 32;
 
-    // [NOVO] Tocar sons ao detectar a tecla
-    if (key == 'u') {
-        tecla_u = true;
-        if(som_u) Mix_PlayChannel(-1, som_u, 0); // Canal -1 (auto), loops 0
-    }
-    if (key == 'i') {
-        tecla_i = true;
-        if(som_i) Mix_PlayChannel(-1, som_i, 0);
-    }
-    if (key == 'a') {
-        tecla_a = true;
-        if(som_a) Mix_PlayChannel(-1, som_a, 0);
-    }
-
+    if (key == 'u') tecla_u = true;
+    if (key == 'i') tecla_i = true;
+    if (key == 'a') tecla_a = true;
+    
+    // Lógica de início da animação visual
     if (key == 'u' || key == 'i' || key == 'a') {
         if (!animando) {
             animando = true;
             anguloGato = 45.0f;
         }
     }
-    
-    if (key == 27) exit(0); // A função cleanup será chamada automaticamente pelo atexit
+
+    if (key == 27) exit(0); // Chama função cleanup automaticamente pelo atexit
 }
 
 void keyboardUp(unsigned char key, int x, int y) {
@@ -268,17 +281,17 @@ void reshape(int w, int h) {
 }
 
 int main(int argc, char** argv) {
-    // [NOVO] Configurar limpeza automática ao sair
+    //Limpeza automática ao sair
     atexit(cleanup);
 
     glutInit(&argc, argv);
     
-    // [NOVO] Inicializa Áudio antes de criar a janela GLUT
+    // Inicializa áudio antes de criar a janela GLUT
     initAudio();
 
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
     glutInitWindowSize(800, 600);
-    glutCreateWindow("Projeto Final: Gato Dancante 3D (Com Som)");
+    glutCreateWindow("UIIA");
 
     configurarLuzes();
 
