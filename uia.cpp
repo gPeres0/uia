@@ -1,19 +1,3 @@
-/**
- * UNIVERSIDADE ESTADUAL DE LONDRINA
- * Trabalho Final: Gato Dançante - FINAL EXPLOSIVO
- * * * RECURSOS NECESSÁRIOS (pasta sounds/):
- * - u.mp3, ii.mp3, a.mp3
- * - uiia.mp3 (Combo)
- * - fase2.mp3 (Musica Fase 2 e Eterno)
- * - explosao.wav [NOVO] (Efeito sonoro curto)
- * * * COMANDOS:
- * - 'u'+'i'+'a': Inicia Combo.
- * - Segurar 10s: Ativa MODO ETERNO.
- * - Aguardar 36s no Modo Eterno: EXPLOSÃO.
- * - 'r': Reiniciar aplicação.
- * * * RUN: g++ uia.cpp -o uia -lGL -lGLU -lglut -lSDL2 -lSDL2_mixer && ./uia
- */
-
 #include <GL/glut.h>
 #include <math.h>
 #include <stdio.h>
@@ -24,7 +8,7 @@ int windowW = 800;
 int windowH = 600;
 
 // Rotação atual do gato
-GLfloat anguloGato = 45.0f;
+GLfloat anguloGato = 30.0f;
 // Estado da animação
 bool animando = false;
 // Estados das teclas
@@ -33,18 +17,18 @@ bool tecla_i = false;
 bool tecla_a = false;
 
 // Variáveis de tempo e Estados especiais
-Uint32 tempoInicioCombo = 0;    // Armazena o momento exato (ms) que o combo começou
-bool fase2 = false;             // Ativa após 10s
-bool modoEterno = false;        // Ativa após 10s
+Uint32 tempoInicioCombo = 0;    // Armazena o momento (ms) que o combo começou
+bool fase2 = false;             
+bool modoEterno = false;        
 float velocidadeGiro = 15.0f;   // Velocidade de giro base
 bool explodido = false;         // Indica se o gato morreu
 bool somExplosaoTocado = false;
 float fatorExplosao = 0.0f;     // Controla a distância das partes na explosão
 
 // Variáveis de levitação
-float anguloLevitacao = 0.0f; // O "relógio" da onda senoidal
-float alturaLevitacao = 0.0f; // A altura Y calculada
-float velocidadeLevitacao = 0.0f; // Quão rápido ele sobe e desce
+float anguloLevitacao = 0.0f;
+float alturaLevitacao = 0.0f;
+float velocidadeLevitacao = 0.0f;
 
 // Cores das luzes
 const GLfloat arcoIris[6][4] = {
@@ -71,7 +55,7 @@ enum EstadoSom { PARADO, TOCANDO_U, TOCANDO_I, TOCANDO_A, TOCANDO_UIIA, TOCANDO_
 EstadoSom estadoAtual = PARADO;
 
 
-// Inicialização do SDL Audio
+// Inicialização SDL Audio
 void initAudio() {
     if (SDL_Init(SDL_INIT_AUDIO) < 0) exit(1);
     if (Mix_Init(MIX_INIT_MP3) == 0) printf("Erro Mix_Init: %s\n", Mix_GetError());
@@ -100,7 +84,7 @@ void cleanup() {
 
 // Função para reiniciar o programa
 void resetarPrograma() {
-    anguloGato = 45.0f;
+    anguloGato = 30.0f;
     animando = false;
     indiceCor = 0;
     
@@ -117,7 +101,7 @@ void resetarPrograma() {
     
     estadoAtual = PARADO;
     Mix_HaltMusic();
-    Mix_HaltChannel(-1); // Para todos os efeitos sonoros
+    Mix_HaltChannel(-1);
     
     // Reseta iluminação
     for (int i = 0; i < 3; i++) {
@@ -206,9 +190,7 @@ void configurarLuzes() {
 }
 
 void atualizarCorLuzes() {
-    // Se explodiu, luzes ficam vermelhas piscando rápido ou escuras
     if (explodido) {
-        // Efeito estroboscópico de erro
         GLfloat corErro[] = {1.0f, 0.0f, 0.0f, 1.0f};
         if (indiceCor % 2 == 0) corErro[0] = 0.0f; // Pisca
         for (int i = 0; i < 3; i++) {
@@ -226,11 +208,9 @@ void atualizarCorLuzes() {
 }
 
 void desenharTextoCentro(const char* texto) {
-    // Desabilita luzes e profundidade para o texto ficar branco e por cima de tudo
     glDisable(GL_LIGHTING);
     glDisable(GL_DEPTH_TEST);
 
-    // Muda para projeção ortogonal (2D)
     glMatrixMode(GL_PROJECTION);
     glPushMatrix();
     glLoadIdentity();
@@ -240,7 +220,6 @@ void desenharTextoCentro(const char* texto) {
     glPushMatrix();
     glLoadIdentity();
 
-    // Cor Branca
     glColor3f(1.0f, 1.0f, 1.0f);
 
     // Calcula a largura do texto em pixels para centralizar
@@ -259,13 +238,11 @@ void desenharTextoCentro(const char* texto) {
         glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, *c);
     }
 
-    // Restaura as matrizes anteriores (Volta para 3D)
     glPopMatrix();
     glMatrixMode(GL_PROJECTION);
     glPopMatrix();
     glMatrixMode(GL_MODELVIEW);
 
-    // Reabilita o que foi desligado
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_LIGHTING);
 }
@@ -284,9 +261,7 @@ void desenharGato() {
             glutSolidSphere(1.0, 40, 40);
         glPopMatrix();
         glPushMatrix(); // Cabeça
-            // Adiciona o fatorExplosao aos vetores de translação
             glTranslatef(0.0f, 0.8f + fatorExplosao, 0.8f + fatorExplosao);
-            // Gira a cabeça aleatoriamente se explodindo
             if(explodido) glRotatef(anguloGato * 2, 1, 0, 0);
             glutSolidSphere(0.6, 40, 40);
             glPushMatrix(); // Orelha esq
@@ -348,13 +323,11 @@ void desenharGato() {
 void display() {
     // Fundo da tela
     if (explodido) {
-        // Fundo vermelho escuro dramático
         glClearColor(0.2f, 0.0f, 0.0f, 1.0f);
     } else if (fase2 || modoEterno) {
         const GLfloat* corFundo = arcoIris[(indiceCor + 3) % 6];
         glClearColor(corFundo[0]*0.7, corFundo[1]*0.7, corFundo[2]*0.7, 1.0f);
     } else {
-        // Fundo preto padrão
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     }
 
@@ -377,20 +350,19 @@ void display() {
 void timer(int value) {
     // Lógica de explosão
     if (explodido) {
-        // Se já explodiu, aumenta a distância dos pedaços infinitamente
         fatorExplosao += 0.2f; 
-        anguloGato += 10.0f; // Gira a cena da explosão
+        anguloGato += 10.0f;
         
-        // Pisca luzes
         indiceCor++;
         if (indiceCor >= 6) indiceCor = 0;
         
         glutPostRedisplay();
         glutTimerFunc(1000/60, timer, 0);
-        return; // Retorn para não processar o resto da lógica normal
+        return;
     }
 
     bool comboAtivo = (tecla_u && tecla_i && tecla_a);
+    
     // Lógica de contagem de tempo
     if (comboAtivo && !modoEterno) {
         if (tempoInicioCombo == 0) {
@@ -399,10 +371,10 @@ void timer(int value) {
         
         Uint32 tempoDecorrido = SDL_GetTicks() - tempoInicioCombo;
         
-        // 5 Segundos -> FASE 2
+        // 4 Segundos -> FASE 2
         if (tempoDecorrido > 4000) velocidadeGiro = 35.0f;
 
-        // 10 Segundos -> MODO ETERNO
+        // 8 Segundos -> MODO ETERNO
         if (tempoDecorrido > 8000) {
             fase2 = true;
             modoEterno = true;
@@ -410,7 +382,6 @@ void timer(int value) {
             printf("MODO ETERNO ATIVADO! (Esc para sair)\n");
         }
     } else {
-        // Se soltar as teclas ANTES de virar eterno, reseta
         if (!modoEterno) {
             tempoInicioCombo = 0;
             fase2 = false;
@@ -425,16 +396,14 @@ void timer(int value) {
         // 8000ms (ativar eterno) + 25000ms (musica) = 33000ms
         if (tempoTotal > 33000) {
             explodido = true;
-            Mix_HaltMusic(); // Para a música
+            Mix_HaltMusic();
             if (!somExplosaoTocado) {
                 Mix_PlayMusic(som_explosao, 0);
                 somExplosaoTocado = true;
-                printf("KABOOM! Pressione 'r' para reiniciar.\n");
             }
         }
     }
 
-    // A levitação só acontece se for Combo, Fase 2 ou Modo Eterno
     if (comboAtivo || modoEterno) {
         // Define a velocidade da onda senoidal
         if (modoEterno) {
@@ -445,14 +414,11 @@ void timer(int value) {
             velocidadeLevitacao = 0.1f; // Lento (Normal)
         }
         
-        // Atualiza o ângulo e calcula a altura Y
         anguloLevitacao += velocidadeLevitacao;
-        // sin(angulo) varia de -1 a 1. Multiplicamos por 0.3 para não pular alto demais.
         alturaLevitacao = sin(anguloLevitacao) * 0.3f; 
     } else {
-        // Se soltar as teclas (e não for eterno), volta suavemente pro chão
         if (fabs(alturaLevitacao) > 0.01f) {
-            alturaLevitacao *= 0.8f; // Amortecimento suave até 0
+            alturaLevitacao *= 0.8f;
         } else {
             alturaLevitacao = 0.0f;
             anguloLevitacao = 0.0f;
@@ -467,7 +433,7 @@ void timer(int value) {
         if (indiceCor >= 6) indiceCor = 0;
 
         if (anguloGato >= 365.0f) {
-            anguloGato = 45.0f;
+            anguloGato = 30.0f;
             if (!comboAtivo && !modoEterno) {
                 animando = false;
                 atualizarCorLuzes(); 
@@ -493,11 +459,11 @@ void keyboard(unsigned char key, int x, int y) {
     if (key == 'u' || key == 'i' || key == 'a') {
         if (!animando) {
             animando = true;
-            anguloGato = 45.0f;
+            anguloGato = 30.0f;
         }
     }
 
-    if (key == 27) exit(0); // Chama função cleanup automaticamente pelo atexit
+    if (key == 27) exit(0);
 }
 
 void keyboardUp(unsigned char key, int x, int y) {
@@ -520,10 +486,9 @@ void reshape(int w, int h) {
 }
 
 int main(int argc, char** argv) {
-    //Limpeza automática ao sair
     atexit(cleanup);
     glutInit(&argc, argv);
-    // Inicializa áudio antes de criar a janela GLUT
+
     initAudio();
 
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
