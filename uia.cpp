@@ -19,6 +19,17 @@ bool tecla_u = false;
 bool tecla_i = false;
 bool tecla_a = false;
 
+// Variáveis de Tempo e Estados Especiais [NOVO]
+Uint32 tempoInicioCombo = 0;    // Armazena o momento exato (ms) que o combo começou
+bool fase2 = false;             // Ativa após 10s
+bool modoEterno = false;        // Ativa após 10s
+float velocidadeGiro = 15.0f;   // Velocidade de giro base
+
+// Variáveis de levitação
+float anguloLevitacao = 0.0f; // O "relógio" da onda senoidal
+float alturaLevitacao = 0.0f; // A altura Y calculada
+float velocidadeLevitacao = 0.0f; // Quão rápido ele sobe e desce
+
 // Cores das luzes
 const GLfloat arcoIris[6][4] = {
     {1.0f, 0.0f, 0.0f, 1.0f}, // Vermelho
@@ -36,9 +47,10 @@ Mix_Music* som_u = NULL;
 Mix_Music* som_i = NULL;
 Mix_Music* som_a = NULL;
 Mix_Music* som_uiia = NULL;
+Mix_Music* som_fase2 = NULL;
 
 // Enum para rastrear qual som está tocando
-enum EstadoSom { PARADO, TOCANDO_U, TOCANDO_I, TOCANDO_A, TOCANDO_UIIA };
+enum EstadoSom { PARADO, TOCANDO_U, TOCANDO_I, TOCANDO_A, TOCANDO_UIIA, TOCANDO_FASE2 };
 EstadoSom estadoAtual = PARADO;
 
 
@@ -52,6 +64,7 @@ void initAudio() {
     som_i = Mix_LoadMUS("sounds/ii.mp3");
     som_a = Mix_LoadMUS("sounds/a.mp3");
     som_uiia = Mix_LoadMUS("sounds/uiia.mp3");
+    som_fase2 = Mix_LoadMUS("sounds/fase2.mp3");
 }
 
 // Limpeza de recursos de áudio
@@ -59,7 +72,8 @@ void cleanup() {
     if (som_u) Mix_FreeMusic(som_u);
     if (som_i) Mix_FreeMusic(som_i);
     if (som_a) Mix_FreeMusic(som_a);
-    if (som_a) Mix_FreeMusic(som_uiia);
+    if (som_uiia) Mix_FreeMusic(som_uiia);
+    if (som_fase2) Mix_FreeMusic(som_fase2);
     Mix_CloseAudio();
     SDL_Quit();
     printf("Recursos de audio liberados.\n");
@@ -67,6 +81,15 @@ void cleanup() {
 
 // Função de gerenciamento responsivo de áudio
 void gerenciarAudio() {
+    // Se o MODO ETERNO estiver ligado, toca Fase 2 para sempre
+    if (modoEterno) {
+        if (estadoAtual != TOCANDO_FASE2) {
+            Mix_PlayMusic(som_fase2, -1);
+            estadoAtual = TOCANDO_FASE2;
+        }
+        return; // Sai da função, ignorando teclas soltas
+    }
+
     // Maior prioridade (U + I + A)
     if (tecla_u && tecla_i && tecla_a) {
         // Só toca se já não estiver tocando
@@ -146,6 +169,7 @@ void atualizarCorLuzes() {
 // Modelagem hierárquica do gato
 void desenharGato() {
     glPushMatrix();
+        glTranslatef(0.0f, alturaLevitacao, 0.0f);
         glRotatef(anguloGato, 0.0f, 1.0f, 0.0f);
         // Corpo
         glPushMatrix();
@@ -211,7 +235,15 @@ void desenharGato() {
 }
 
 void display() {
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    // Fundo da tela
+    if (fase2 || modoEterno) {
+        const GLfloat* corFundo = arcoIris[(indiceCor + 3) % 6];
+        glClearColor(corFundo[0]*0.7, corFundo[1]*0.7, corFundo[2]*0.7, 1.0f);
+    } else {
+        // Fundo preto padrão
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    }
+
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glLoadIdentity();
 
@@ -225,20 +257,78 @@ void display() {
 }
 
 void timer(int value) {
+    bool comboAtivo = (tecla_u && tecla_i && tecla_a);
+    // Lógica de contagem de tempo
+    if (comboAtivo && !modoEterno) {
+        if (tempoInicioCombo == 0) {
+            tempoInicioCombo = SDL_GetTicks(); // Começa contador
+        }
+        
+        Uint32 tempoDecorrido = SDL_GetTicks() - tempoInicioCombo;
+        
+        // 5 Segundos -> FASE 2
+        if (tempoDecorrido > 5000) {
+            velocidadeGiro = 35.0f;
+        }
+
+        // 10 Segundos -> MODO ETERNO
+        if (tempoDecorrido > 10000) {
+            fase2 = true;
+            modoEterno = true;
+            velocidadeGiro = 55.0f;
+            printf("MODO ETERNO ATIVADO! (Esc para sair)\n");
+        }
+    } else {
+        // Se soltar as teclas ANTES de virar eterno, reseta
+        if (!modoEterno) {
+            tempoInicioCombo = 0;
+            fase2 = false;
+            velocidadeGiro = 15.0f;
+        }
+    }
+
+    if (modoEterno) animando = true;
+
+    // A levitação só acontece se for Combo, Fase 2 ou Modo Eterno
+    if (comboAtivo || modoEterno) {
+        // Define a velocidade da onda senoidal
+        if (modoEterno) {
+            velocidadeLevitacao = 0.5f; // Muito Rápido
+        } else if (fase2) {
+            velocidadeLevitacao = 0.2f; // Rápido
+        } else {
+            velocidadeLevitacao = 0.1f; // Lento (Normal)
+        }
+        
+        // Atualiza o ângulo e calcula a altura Y
+        anguloLevitacao += velocidadeLevitacao;
+        // sin(angulo) varia de -1 a 1. Multiplicamos por 0.3 para não pular alto demais.
+        alturaLevitacao = sin(anguloLevitacao) * 0.3f; 
+    } else {
+        // Se soltar as teclas (e não for eterno), volta suavemente pro chão
+        if (fabs(alturaLevitacao) > 0.01f) {
+            alturaLevitacao *= 0.8f; // Amortecimento suave até 0
+        } else {
+            alturaLevitacao = 0.0f;
+            anguloLevitacao = 0.0f;
+        }
+    }
+    
     gerenciarAudio();
 
     if (animando) {
-        anguloGato += 15.0f; 
+        anguloGato += velocidadeGiro;
         indiceCor++;
         if (indiceCor >= 6) indiceCor = 0;
 
         if (anguloGato >= 365.0f) {
-            anguloGato = 45.0f; 
-            if (!(tecla_u && tecla_i && tecla_a)) {
+            anguloGato = 45.0f;
+            if (!(tecla_u && tecla_i && tecla_a && modoEterno)) {
                 animando = false;
                 atualizarCorLuzes(); 
             }
         }
+    
     }
     glutPostRedisplay();
     glutTimerFunc(1000/60, timer, 0);
@@ -252,7 +342,6 @@ void keyboard(unsigned char key, int x, int y) {
     if (key == 'i') tecla_i = true;
     if (key == 'a') tecla_a = true;
     
-    // Lógica de início da animação visual
     if (key == 'u' || key == 'i' || key == 'a') {
         if (!animando) {
             animando = true;
@@ -283,9 +372,7 @@ void reshape(int w, int h) {
 int main(int argc, char** argv) {
     //Limpeza automática ao sair
     atexit(cleanup);
-
     glutInit(&argc, argv);
-    
     // Inicializa áudio antes de criar a janela GLUT
     initAudio();
 
